@@ -13,7 +13,7 @@
 #define SD_CS_PIN 10
 #define SD_MOSI_PIN 11
 #define SD_MISO_PIN 13
-#define SD_SCK_PIN 12
+#define SD_CLK_PIN 12 //also know as SCK pin 
 
 #define BUTTON_PIN 8
 #define LED_PIN 3
@@ -110,7 +110,7 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
-  SPI.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+  SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
 
   if (!SD.begin(SD_CS_PIN)) {
     Serial.println("SD Card not Initialize!");

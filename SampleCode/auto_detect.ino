@@ -70,4 +70,3 @@ float readMicrophoneVolume() {
   }
   return sqrt(sum_squares / samples_count);
 }
-Use code with caution.For a comprehensive video demonstration on assembling and programming an ESP32 voice recorder from scratch:6 site
