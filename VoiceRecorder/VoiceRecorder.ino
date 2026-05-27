@@ -15,7 +15,7 @@
 #define SD_MISO_PIN 13
 #define SD_CLK_PIN 12 //also know as SCK pin 
 
-#define BUTTON_PIN 8
+//#define BUTTON_PIN 8
 #define LED_PIN 3
 
 #define SAMPLE_RATE 48000  // DVD quality
@@ -23,9 +23,17 @@
 #define WAVE_HEADER_SIZE 44
 #define MY_CLOCK 4000000
 
+// Recording constraints
+const int recordingTimeLimit = 30000; // 30 seconds limit
+const float soundThresholdMultiplier = 1.4; // Starts recording if 1.5x louder than quiet
+const int silenceTimeout = 5000; // Stop if silent for 5 seconds
+
 File file;
 bool isRecording = false;
 unsigned long lastBlinkTime = 0;
+unsigned long recordingStartTime = 0;
+unsigned long lastSoundTime = 0;
+unsigned long baselineNoise = 0;
 int fileIndex = 1;
 char filename[32];
  
@@ -105,8 +113,7 @@ void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels,
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("Hello World.");
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  //pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
@@ -122,45 +129,70 @@ void setup() {
     }
   }
   Serial.println("SD Card Ready.");
-
   i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
   i2s_set_pin(I2S_NUM, &pin_config);
   i2s_zero_dma_buffer(I2S_NUM);
-
+  calibrateNoiseFloor();
   Serial.println("System is Ready. Click the utton for Recording.");
 }
 
 void loop() {  
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    delay(200); 
-    if (isRecording) {
+  // 1. If NOT recording, we sample the microphone to look for the trigger sound
+  if (!isRecording) {
+    float currentVolume = readMicrophoneVolume();
+    
+    if (currentVolume > (baselineNoise * soundThresholdMultiplier)) {
+      Serial.println("Start Recording!");
+      startRecording();
+      recordingStartTime = millis();
+      lastSoundTime = millis();
+    }
+  } 
+  // 2. If WE ARE recording, we process audio inside appendAudioToSD
+  else {
+    unsigned long elapsed = millis() - recordingStartTime;
+    unsigned long silenceDuration = millis() - lastSoundTime; // Use unsigned long for millis
+
+    // Check time limit OR silence limit
+    if (elapsed >= recordingTimeLimit || silenceDuration >= silenceTimeout) {
       stopRecording();
     } else {
-      startRecording();
+      // appendAudioToSD now returns true if it detected sound, false if quiet
+      bool soundDetected = appendAudioToSD();
+      
+      if (soundDetected) {
+        lastSoundTime = millis(); // Reset silence timer
+      }
     }
-    while (digitalRead(BUTTON_PIN) == LOW)
-      ; 
   }
- 
-  if (isRecording) { 
-    digitalWrite(LED_PIN, HIGH);
+}
 
-    size_t bytesRead;
-    int32_t i2sBuffer[256]; 
- 
-    i2s_read(I2S_NUM, (void *)i2sBuffer, sizeof(i2sBuffer), &bytesRead, portMAX_DELAY);
-
-    int16_t samples16[256];
-    int samplesCount = bytesRead / 4;
-
-    for (int i = 0; i < samplesCount; i++) {
-      samples16[i] = (int16_t)(i2sBuffer[i] >> 14);
-    }
-
-    file.write((uint8_t *)samples16, samplesCount * 2);
-  } else {
-    digitalWrite(LED_PIN, LOW);
+void calibrateNoiseFloor() {
+  float sum = 0;
+  for (int i = 0; i < 100; i++) {
+    sum += readMicrophoneVolume();
+    delay(10);
   }
+  baselineNoise = sum / 100.0;
+}
+
+// Helper to calculate RMS from raw PCM data (Used only when idling)
+float readMicrophoneVolume() {
+  int32_t raw_samples[512];
+  size_t bytes_read;
+  i2s_read(I2S_NUM_0, (void**)raw_samples, sizeof(raw_samples), &bytes_read, portMAX_DELAY);
+  
+  float sum_squares = 0;
+  int samples_count = bytes_read / sizeof(int32_t);
+  if (samples_count == 0) return 0;
+
+  for (int i = 0; i < samples_count; i++) {
+    // FIX: Downsample to 16-bit exactly like you do during recording
+    int16_t sample16 = (int16_t)(raw_samples[i] >> 14); 
+    float sample = (float)sample16;
+    sum_squares += sample * sample;
+  }
+  return sqrt(sum_squares / samples_count);
 }
 
 void startRecording() { 
@@ -169,7 +201,7 @@ void startRecording() {
   }
   sprintf(filename, "/rec%d.wav", fileIndex);
 
-  Serial.print("Record is Start: ");
+  Serial.print("Recording has started: ");
   Serial.println(filename);
 
   file = SD.open(filename, FILE_WRITE);
@@ -181,17 +213,49 @@ void startRecording() {
   writeWavHeader(file, SAMPLE_RATE, 16, 1, 0);
 
   isRecording = true;
+  digitalWrite(LED_PIN, HIGH); // Turn LED on when starting
 }
 
 void stopRecording() {
-  Serial.println("Recors is Stopped...");
+  Serial.println("Recording is Stopped...");
   isRecording = false;
- 
   unsigned long fileSize = file.size() - WAVE_HEADER_SIZE;
   file.seek(0);
   writeWavHeader(file, SAMPLE_RATE, 16, 1, fileSize);
   file.close();
+  Serial.println("Recording is Complete!");
+  digitalWrite(LED_PIN, LOW); // Turn LED off when done
+}
 
-  Serial.println("Record is Complete!");
-  digitalWrite(LED_PIN, LOW);
+// Fixed function: Writes to SD AND checks volume at the same time
+bool appendAudioToSD() {
+    size_t bytesRead;
+    int32_t i2sBuffer[256]; 
+ 
+    // FIXED: Changed I2S_NUM to I2S_NUM_0
+    i2s_read(I2S_NUM_0, (void *)i2sBuffer, sizeof(i2sBuffer), &bytesRead, portMAX_DELAY);
+
+    int16_t samples16[256];
+    int samplesCount = bytesRead / 4;
+    if (samplesCount == 0) return false;
+
+    float sum_squares = 0;
+
+    for (int i = 0; i < samplesCount; i++) {
+      // Downsample 32-bit to 16-bit
+      samples16[i] = (int16_t)(i2sBuffer[i] >> 14);
+      
+      // Calculate volume on the fly
+      float sample = (float)samples16[i];
+      sum_squares += sample * sample;
+    }
+
+    // Write data to SD Card
+    file.write((uint8_t *)samples16, samplesCount * 2);
+
+    // Calculate current RMS volume of this chunk
+    float currentVolume = sqrt(sum_squares / samplesCount);
+
+    // Return true if volume is above the threshold
+    return (currentVolume > (baselineNoise * soundThresholdMultiplier));
 }
