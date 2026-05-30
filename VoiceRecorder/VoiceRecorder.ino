@@ -30,7 +30,7 @@
 #define MY_CLOCK 4000000
 
 // Recording constraints
-const int recordingTimeLimit = 300000; // 30 seconds limit
+const int recordingTimeLimit = 30000; // 30 seconds limit
 const float soundThresholdMultiplier = 1.4; // Starts recording if 1.5x louder than quiet
 const int silenceTimeout = 5000; // Stop if silent for 5 seconds
 
@@ -217,11 +217,8 @@ void startRecording() {
   // Fetch the current date and time from the DS3231 
   DateTime now = rtc.now();
   snprintf(filename, sizeof(filename), "/rec_%04d-%02d-%02d_%02d_%02d_%02d.wav", 
-          now.year(), 
-          now.month(), 
-          now.day(),
-          now.minute(),
-          now.second());
+          now.year(), now.month(), now.day(), 
+          now.hour(), now.minute(), now.second());
 
   Serial.print("Recording has started: ");
   Serial.println(filename);
@@ -264,7 +261,7 @@ bool appendAudioToSD() {
 
     for (int i = 0; i < samplesCount; i++) {
       // Downsample 32-bit to 16-bit
-      samples16[i] = (int16_t)(i2sBuffer[i] >> 14);
+      samples16[i] = (int16_t)(i2sBuffer[i] >> 16);
       
       // Calculate volume on the fly
       float sample = (float)samples16[i];
