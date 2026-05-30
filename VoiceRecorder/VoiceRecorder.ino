@@ -5,6 +5,9 @@
 #include <FS.h>
 #include <Wire.h>
 #include <RTClib.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
 
 #define I2S_BCK_PIN 4
 #define I2S_WS_PIN 5
@@ -26,6 +29,8 @@
 #define I2S_NUM I2S_NUM_0
 #define WAVE_HEADER_SIZE 44
 #define MY_CLOCK 4000000
+#define SERVICE_UUID        "fdcff45e-438b-4a62-acf6-dbd852aae4b1"
+#define CHARACTERISTIC_UUID "cf28c230-d88e-4e6e-8a2e-0efc4d8ec072"
 
 // Recording constraints
 const int recordingTimeLimit = 30000; // 30 seconds limit
@@ -121,6 +126,56 @@ void setup() {
   pinMode(LED_PIN_2, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   digitalWrite(LED_PIN_2, LOW);
+
+  Serial.println("Starting BLE work!");
+
+  // 1. Initialize the BLE device and give it a name
+  BLEDevice::init("ESP32S3_BLE_Wolfe_1");
+
+  // 2. Create the BLE Server
+  BLEServer *pServer = BLEDevice::createServer();
+
+  // 3. Create the BLE Service using the UUID defined above
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // 4. Create a BLE Characteristic for that service
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+
+  // 5. Set an initial value for the characteristic
+  pCharacteristic->setValue("Hello from ESP32-S3 Wolfe 1!");
+
+  // 6. Start the service
+  pService->start();
+
+  // 7. Start advertising so scanners can find it
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  // MIN & MAX advertising intervals. 
+  // 0x0640 * 0.625 ms = 1000 ms (1 second)
+  // Higher interval = lower power, but takes longer for your Android phone to discover.
+  pAdvertising->setMinInterval(0x0640); 
+  pAdvertising->setMaxInterval(0x0640);
+  
+  BLEDevice::startAdvertising();
+  Serial.println("Characteristic defined! Now advertising...");
+  // 4. Power Optimization: Enable automatic Light Sleep
+  // This allows the ESP32-S3 to automatically enter light sleep 
+  // between BLE advertising intervals.
+  esp_sleep_enable_timer_wakeup(1000000); // Optional: dynamic fallback
+  
+  #if CONFIG_PM_ENABLE
+    esp_pm_config_esp32s3_t pm_config = {
+        .max_freq_mhz = 240,
+        .min_freq_mhz = 40,      // XTAL frequency
+        .light_sleep_enable = true
+    };
+    esp_pm_configure(&pm_config);
+  #endif
 
   bool i2c_ok = Wire.begin(I2C_SDA, I2C_SCL);
   if (!i2c_ok) {
