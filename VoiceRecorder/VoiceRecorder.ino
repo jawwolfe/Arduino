@@ -19,6 +19,7 @@
 
 //#define BUTTON_PIN 8
 #define LED_PIN 3
+#define LED_PIN_2 17
 
 //clock RTC
 #define I2C_SDA 8
@@ -30,7 +31,7 @@
 #define MY_CLOCK 4000000
 
 // Recording constraints
-const int recordingTimeLimit = 30000; // 30 seconds limit
+const int recordingTimeLimit = 300000; // 30 seconds limit
 const float soundThresholdMultiplier = 1.4; // Starts recording if 1.5x louder than quiet
 const int silenceTimeout = 5000; // Stop if silent for 5 seconds
 
@@ -40,7 +41,6 @@ unsigned long lastBlinkTime = 0;
 unsigned long recordingStartTime = 0;
 unsigned long lastSoundTime = 0;
 unsigned long baselineNoise = 0;
-int fileIndex = 1;
 char filename[64];
 RTC_DS3231 rtc;
  
@@ -122,7 +122,9 @@ void setup() {
   Serial.begin(9600);
   //pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(LED_PIN, OUTPUT);
+  pinMode(LED_PIN_2, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+  digitalWrite(LED_PIN_2, LOW);
 
   bool i2c_ok = Wire.begin(I2C_SDA, I2C_SCL);
   if (!i2c_ok) {
@@ -215,21 +217,17 @@ float readMicrophoneVolume() {
 }
 
 void startRecording() { 
-  while (SD.exists("/rec" + String(fileIndex) + ".wav")) {
-    fileIndex++;
-    snprintf(filename, sizeof(filename), "/rec%d.wav", fileIndex);
-  }
-
-  // Fetch the current date and time from the DS3231 (Now rtc works perfectly!)
+    // Fetch the current date and time from the DS3231 (Now rtc works perfectly!)
   DateTime now = rtc.now();
 
   // Format: /rec1_2026-05-27.wav (ISO date format)
   // Note: Do not use ":" inside filenames on FAT32 SD cards, as it is an invalid character!
-  snprintf(filename, sizeof(filename), "/rec%d_%04d-%02d-%02d.wav", 
-          fileIndex, 
+  snprintf(filename, sizeof(filename), "/rec_%04d-%02d-%02d_%02d_%02d_%02d.wav", 
           now.year(), 
           now.month(), 
-          now.day());
+          now.day(),
+          now.minute(),
+          now.second());
 
   Serial.print("Recording has started: ");
   Serial.println(filename);
@@ -281,8 +279,31 @@ bool appendAudioToSD() {
     }
 
     // Write data to SD Card
-    file.write((uint8_t *)samples16, samplesCount * 2);
+    size_t bytesWritten = file.write((uint8_t *)samples16, samplesCount * 2);
 
+    // If bytes written don't match buffer size, the card is likely full
+    if (bytesWritten < 512) {
+      Serial.println("CRITICAL ERROR: Write failed!");
+      
+      // Check actual storage capacity to confirm
+      uint64_t totalBytes = SD.totalBytes();
+      uint64_t usedBytes = SD.usedBytes();
+      uint64_t freeBytes = totalBytes - usedBytes;
+
+      Serial.printf("Storage Status: %llu / %llu bytes used.\n", usedBytes, totalBytes);
+      Serial.printf("Remaining Space: %llu bytes.\n", freeBytes);
+
+      if (freeBytes < 512) {
+          Serial.println("Error Cause: Insufficient storage space on SD card.");
+          // Halt execution or trigger a system alert/LED here
+          digitalWrite(LED_PIN, LOW); 
+          digitalWrite(LED_PIN_2, HIGH);
+          while (true) { delay(1000); } 
+      } else {
+          Serial.println("Error Cause: Hardware disconnect or file corruption.");
+      }
+    }
+   
     // Calculate current RMS volume of this chunk
     float currentVolume = sqrt(sum_squares / samplesCount);
 
