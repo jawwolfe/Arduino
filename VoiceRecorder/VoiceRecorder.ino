@@ -38,10 +38,10 @@ const int START_1_MIN = 30;
 const int STOP_1_HR = 9;    // Window 1 End: 09:30
 const int STOP_1_MIN = 30;
 
-const int START_2_HR = 17;  // Window 2 Start: 17:00
+const int START_2_HR = 16;  // Window 2 Start: 17:00
 const int START_2_MIN = 0;
-const int STOP_2_HR = 22;   // Window 2 End: 18:00
-const int STOP_2_MIN = 0;
+const int STOP_2_HR = 17;   // Window 2 End: 18:00
+const int STOP_2_MIN = 15;
 
 // Recording constraints
 const int recordingTimeLimit = 30000; // 30 seconds limit
@@ -138,64 +138,12 @@ void setup() {
   pinMode(LED_PIN_2, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   digitalWrite(LED_PIN_2, LOW);
-  // Get current time from the DS3231 module
-  DateTime now = rtc.now();
-  Serial.println("Starting BLE work!");
-
-  // 1. Initialize the BLE device and give it a name
-  BLEDevice::init("ESP32S3_BLE_Wolfe_1");
-
-  // 2. Create the BLE Server
-  BLEServer *pServer = BLEDevice::createServer();
-
-  // 3. Create the BLE Service using the UUID defined above
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-
-  // 4. Create a BLE Characteristic for that service
-  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
-                                         CHARACTERISTIC_UUID,
-                                         BLECharacteristic::PROPERTY_READ |
-                                         BLECharacteristic::PROPERTY_WRITE
-                                       );
-
-  // 5. Set an initial value for the characteristic
-  pCharacteristic->setValue("Hello from ESP32-S3 Wolfe 1!");
-
-  // 6. Start the service
-  pService->start();
-
-  // 7. Start advertising so scanners can find it
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(true);
-  // MIN & MAX advertising intervals. 
-  // 0x0640 * 0.625 ms = 1000 ms (1 second)
-  // Higher interval = lower power, but takes longer for your Android phone to discover.
-  pAdvertising->setMinInterval(0x0640); 
-  pAdvertising->setMaxInterval(0x0640);
-  
-  BLEDevice::startAdvertising();
-  Serial.println("Characteristic defined! Now advertising...");
-  // 4. Power Optimization: Enable automatic Light Sleep
-  // This allows the ESP32-S3 to automatically enter light sleep 
-  // between BLE advertising intervals.
-  esp_sleep_enable_timer_wakeup(1000000); // Optional: dynamic fallback
-  
-  #if CONFIG_PM_ENABLE
-    esp_pm_config_esp32s3_t pm_config = {
-        .max_freq_mhz = 240,
-        .min_freq_mhz = 40,      // XTAL frequency
-        .light_sleep_enable = true
-    };
-    esp_pm_configure(&pm_config);
-  #endif
 
   bool i2c_ok = Wire.begin(I2C_SDA, I2C_SCL);
   if (!i2c_ok) {
     Serial.println("Error: Failed to initialize I2C bus.");
     while (1);
   }
-
   if (!rtc.begin()) {
     Serial.println("Error: Could not find DS3231 module. Check your wiring!");
     while (1);
@@ -205,6 +153,8 @@ void setup() {
     // This sets the RTC to the date & time this sketch was compiled
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
+  // Get current time from the DS3231 module
+  DateTime now = rtc.now();
 
   // Convert everything to minutes since midnight for easy comparison
   int currentMinutes = (now.hour() * 60) + now.minute();
@@ -217,9 +167,58 @@ void setup() {
   bool inWindow1 = (currentMinutes >= start1 && currentMinutes < stop1);
   bool inWindow2 = (currentMinutes >= start2 && currentMinutes < stop2);
 
+  Serial.println(currentMinutes);
+  Serial.println(start2);
+  Serial.println(stop2);
+  Serial.println(inWindow2);
+
   if (inWindow1 || inWindow2) {
     // We are supposed to be awake! Proceed to void loop()
     Serial.println("Inside an active window. Running loop()...");
+
+
+    Serial.println("Starting BLE work!");
+    // 1. Initialize the BLE device and give it a name
+    BLEDevice::init("ESP32S3_BLE_Wolfe_1");
+    // 2. Create the BLE Server
+    BLEServer *pServer = BLEDevice::createServer();
+    // 3. Create the BLE Service using the UUID defined above
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    // 4. Create a BLE Characteristic for that service
+    BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+                                          CHARACTERISTIC_UUID,
+                                          BLECharacteristic::PROPERTY_READ |
+                                          BLECharacteristic::PROPERTY_WRITE
+                                        );
+
+    // 5. Set an initial value for the characteristic
+    pCharacteristic->setValue("Hello from ESP32-S3 Wolfe 1!");
+    // 6. Start the service
+    pService->start();
+    // 7. Start advertising so scanners can find it
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    // MIN & MAX advertising intervals. 
+    // 0x0640 * 0.625 ms = 1000 ms (1 second)
+    // Higher interval = lower power, but takes longer for your Android phone to discover.
+    pAdvertising->setMinInterval(0x0640); 
+    pAdvertising->setMaxInterval(0x0640);
+      BLEDevice::startAdvertising();
+    Serial.println("Characteristic defined! Now advertising...");
+    // 4. Power Optimization: Enable automatic Light Sleep
+    // This allows the ESP32-S3 to automatically enter light sleep 
+    // between BLE advertising intervals.
+    esp_sleep_enable_timer_wakeup(1000000); // Optional: dynamic fallback
+    #if CONFIG_PM_ENABLE
+      esp_pm_config_esp32s3_t pm_config = {
+          .max_freq_mhz = 240,
+          .min_freq_mhz = 40,      // XTAL frequency
+          .light_sleep_enable = true
+      };
+      esp_pm_configure(&pm_config);
+    #endif
+
     SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
     if (!SD.begin(SD_CS_PIN)) {
       Serial.println("SD Card not Initialize!");
@@ -236,6 +235,7 @@ void setup() {
     i2s_zero_dma_buffer(I2S_NUM);
     calibrateNoiseFloor();
     Serial.println("System is Ready. Waiting for sound trigger");
+
     } else {
       // We are outside the windows. Calculate sleep duration and go to sleep immediately.
       int minutesToSleep = 0;
@@ -295,7 +295,7 @@ void loop() {
   }
 
   // Dynamically check if our active window has just expired
-  //DateTime now = rtc.now();
+  DateTime now = rtc.now();
   int currentMinutes = (now.hour() * 60) + now.minute();
   int start1 = (START_1_HR * 60) + START_1_MIN;
   int stop1  = (STOP_1_HR * 60) + STOP_1_MIN;
@@ -310,7 +310,7 @@ void loop() {
     Serial.println("Active window expired! Going to sleep.");
     Serial.flush();
     esp_restart(); 
-
+  }
 }
 
 void calibrateNoiseFloor() {
