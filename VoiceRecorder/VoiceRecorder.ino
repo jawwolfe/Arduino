@@ -41,7 +41,7 @@ const int STOP_1_MIN = 30;
 
 const int START_2_HR = 16;  // Window 2 Start: 17:00
 const int START_2_MIN = 0;
-const int STOP_2_HR = 17;   // Window 2 End: 18:00
+const int STOP_2_HR = 19;   // Window 2 End: 18:00
 const int STOP_2_MIN = 15;
 
 // Recording constraints
@@ -50,8 +50,10 @@ const float soundThresholdMultiplier = 1.3; // Starts recording if 1.5x louder t
 const int silenceTimeout = 5000; // Stop if silent for 5 seconds
 const long int_samp_blnk = 1000;
 unsigned long prevMillisBlnk = 0;    
+unsigned long startDiscError = 0;
+const unsigned long intDiscError = 10000;
 int ledState = LOW;  
-const int ledPin = 17;
+const int ledPin = 3;
 
 File file;
 bool isRecording = false;
@@ -370,15 +372,22 @@ void startRecording() {
 
   Serial.print("Recording has started: ");
   Serial.println(filename);
-
   file = SD.open(filename, FILE_WRITE);
   if (!file) {
     Serial.println("File is not Open!");
+    //Turn off blue 3 led
+    digitalWrite(LED_PIN, LOW);
+    //Fast blink the 17 yellow for 10 seconds then return to lisitening
+    startDiscError = millis();
+    while (millis() - startDiscError <= intDiscError) {
+        digitalWrite(LED_PIN_2, HIGH);
+        delay(500);
+        digitalWrite(LED_PIN_2, LOW);
+        delay(500);
+    }
     return;
   }
- 
-  writeWavHeader(file, SAMPLE_RATE, 16, 1, 0);
-
+   writeWavHeader(file, SAMPLE_RATE, 16, 1, 0);
   isRecording = true;
   digitalWrite(LED_PIN, HIGH); // Turn LED on when starting
 }
@@ -437,14 +446,14 @@ bool appendAudioToSD() {
           digitalWrite(LED_PIN, LOW); 
           while (true) { 
             digitalWrite(LED_PIN_2, HIGH);
-            delay(1000); 
+            delay(1250); 
             digitalWrite(LED_PIN_2, LOW);
           } 
       } else {
           Serial.println("Error Cause: Hardware disconnect or file corruption.");
           while (true) { 
             digitalWrite(LED_PIN_2, HIGH);
-            delay(1000); 
+            delay(1250); 
             digitalWrite(LED_PIN_2, LOW);
           } 
       }
