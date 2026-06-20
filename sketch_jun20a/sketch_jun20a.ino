@@ -4,8 +4,8 @@
 TinyGPSPlus gps;
 
 // Use safer, unassigned GPIOs for the ESP32-S3
-#define RXD1 18  // Connect to the TX pin of the GPS!!!! reversed!!
-#define TXD1 17  // Connect to the RX pin of the GPS!!!! reversed!!
+#define RXD1 16  // Connect to the TX pin of the GPS!!!! reversed!!
+#define TXD1 15  // Connect to the RX pin of the GPS!!!! reversed!!
 
 // --- GLOBAL DEFAULTS ---
 // Set these to whatever fallback coordinates you want 
