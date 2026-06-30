@@ -83,9 +83,7 @@ unsigned long GPSWiringLastDataTime = 0;
 unsigned long lastGPSHourlyUpdate = 0;
 const unsigned long GPS_ONE_HOUR_MS = 3600000;      // 60 mins * 60 secs * 1000 ms
 const unsigned long GPS_SETUP_TIMEOUT_MS = 15000;   // 15 seconds max wait in setup
-int GPS_POWER_PIN  = 1;
-int GPS_ON = LOW;
-int GPS_OFF = HIGH;
+const int MOSFET_GATE_PIN  = 1;
 
 // --- LED PIN DEFINITIONS ---
 const int LED_PIN = 14; // blue led for recording or listening
@@ -122,8 +120,8 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
   digitalWrite(LED_PIN_2, LOW);
 
-  pinMode(GPS_POWER_PIN, OUTPUT);
-  digitalWrite(GPS_POWER_PIN, GPS_OFF);
+  pinMode(MOSFET_GATE_PIN, OUTPUT);
+  digitalWrite(MOSFET_GATE_PIN, LOW);
 
   bool i2c_ok = Wire.begin(RTC_SDA_PIN, RTC_SCL_PIN);
   if (!i2c_ok) {
@@ -140,7 +138,7 @@ void setup() {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
-    // Initialize Serial1
+  // Initialize Serial1
   Serial1.begin(9600, SERIAL_8N1, RXD1, TXD1);
   Serial.println("ESP32-S3 GPS Test Initialized.");
   unsigned long setupStart = millis();
@@ -172,7 +170,6 @@ void setup() {
     return;
   }
 
-  
   //one time code to enter the unit id into the EEPROM as a config
   //char charBuffer[MAX_STRING_LENGTH];
   //String myString = "esp32_aw_01";  
@@ -184,7 +181,7 @@ void setup() {
 
   if (inWindow1 || inWindow2) {
     // We are supposed to be awake! Proceed to void loop()
-    digitalWrite(GPS_POWER_PIN, GPS_ON);
+    digitalWrite(MOSFET_GATE_PIN, LOW);
 
     // GET initial GPS coordinates
     while (!hasValidGpsFix && (millis() - setupStart < GPS_SETUP_TIMEOUT_MS)) {
@@ -214,6 +211,9 @@ void setup() {
       Serial.println("\n--- Setup GPS Timeout ---");
       Serial.println("Could not get a satellite lock in time.");
     }
+    digitalWrite(MOSFET_GATE_PIN, HIGH);
+    Serial.println("GPS Powered OFF via MOSFET post-setup.");
+    
     // Synchronize our timers right as setup finishes
     GPSWiringLastDataTime = millis();
     lastGPSHourlyUpdate = millis();
@@ -279,7 +279,7 @@ void setup() {
 
     } else {
       // We are outside the windows. Calculate sleep duration and go to sleep immediately.
-      digitalWrite(GPS_POWER_PIN, GPS_OFF);
+      digitalWrite(MOSFET_GATE_PIN, HIGH);
       int minutesToSleep = 0;
 
       if (currentMinutes < start1) {
@@ -391,7 +391,7 @@ void loop() {
   // If we drop out of BOTH windows, force a restart so setup() can handle the deep sleep math
   if (!inWindow1 && !inWindow2) {
     Serial.println("Active window expired! Going to sleep.");
-    digitalWrite(GPS_POWER_PIN, GPS_OFF);
+    digitalWrite(MOSFET_GATE_PIN, HIGH);
     Serial.flush();
     esp_restart(); 
   }
@@ -430,9 +430,8 @@ void startRecording() {
   char deviceName[16];
   strlcpy(deviceName, readStringFromEEPROM(eepromAddress).c_str(), sizeof(deviceName));
   snprintf(filename, sizeof(filename), "/%s_%.6f_%.6f_%04d-%02d-%02d_%02d_%02d_%02d.wav", 
-          deviceName, globalLat, globalLng,         
-          now.year(), now.month(), now.day(), 
-          now.hour(), now.minute(), now.second());
+          deviceName, now.year(), now.month(), now.day(), 
+          now.hour(), now.minute(), now.second(), globalLat, globalLng);
 
   Serial.print("Recording has started: ");
   Serial.println(filename);
