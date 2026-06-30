@@ -59,7 +59,7 @@ const int STOP_1_HR = 11;    // Window 1 End
 const int STOP_1_MIN = 59;
 const int START_2_HR = 12;  // Window 2 Start
 const int START_2_MIN = 0;
-const int STOP_2_HR = 23;   // Window 2 End
+const int STOP_2_HR = 19;   // Window 2 End
 const int STOP_2_MIN = 15;
 
 // --- SD CARD MODULE GLOBAL DEFAULTS and VARIABLES ---
@@ -82,7 +82,7 @@ bool hasValidGpsFix = false;
 unsigned long GPSWiringLastDataTime = 0;
 unsigned long lastGPSHourlyUpdate = 0;
 const unsigned long GPS_ONE_HOUR_MS = 3600000;      // 60 mins * 60 secs * 1000 ms
-const unsigned long GPS_SETUP_TIMEOUT_MS = 15000;   // 15 seconds max wait in setup
+const unsigned long GPS_SETUP_TIMEOUT_MS = 25000;   // 15 seconds max wait in setup
 const int MOSFET_GATE_PIN  = 1;
 
 // --- LED PIN DEFINITIONS ---
@@ -213,7 +213,7 @@ void setup() {
     }
     digitalWrite(MOSFET_GATE_PIN, HIGH);
     Serial.println("GPS Powered OFF via MOSFET post-setup.");
-    
+
     // Synchronize our timers right as setup finishes
     GPSWiringLastDataTime = millis();
     lastGPSHourlyUpdate = millis();
@@ -308,29 +308,13 @@ void setup() {
 
 void loop() {  
 
-  // GPS code
-  bool dataReceived = false;
-  // Keep feeding TinyGPS++ constantly in the background
-  while (Serial1.available() > 0) {
-    char c = Serial1.read();
-    dataReceived = true;
-    gps.encode(c);
-  }
-  if (dataReceived) {
-    GPSWiringLastDataTime = millis(); // Reset wiring timeout tracker
-  }
 
-  // --- HOURLY UPDATE LOGIC (Non-blocking) ---
+  // --- HOURLY UPDATE LOGIC (Non-blocking window check) ---
   if (millis() - lastGPSHourlyUpdate >= GPS_ONE_HOUR_MS) {
     updateHourlyCoordinates();
     lastGPSHourlyUpdate = millis(); // Reset the 1-hour timer
   }
 
-  // Wiring check: If 5 seconds pass without ANY raw data over the serial line
-  if (millis() - GPSWiringLastDataTime > 5000) {
-    Serial.println("Error: No raw GPS data detected. Check your wiring or pins!");
-    GPSWiringLastDataTime = millis(); 
-  }
 
   // 1. If NOT recording, we sample the microphone to look for the trigger sound
   if (!isRecording) {
@@ -397,6 +381,49 @@ void loop() {
   }
 }
 
+void updateHourlyCoordinates() {
+  Serial.println("\n--- Triggering Hourly GPS Update ---");
+  Serial.println("Powering ON GPS via MOSFET...");
+  digitalWrite(MOSFET_GATE_PIN, LOW); // Turn ON GPS
+
+  // Clear older data inside the TinyGPS parser object
+  gps = TinyGPSPlus(); 
+
+  unsigned long updateStart = millis();
+  bool localFixAcquired = false;
+
+  // Actively pool and decode Serial1 data for the duration of the timeout
+  while (millis() - updateStart < GPS_SETUP_TIMEOUT_MS) {
+    while (Serial1.available() > 0) {
+      char c = Serial1.read();
+      if (gps.encode(c)) {
+        if (gps.location.isValid()) {
+          globalLat = gps.location.lat();
+          globalLng = gps.location.lng();
+          hasValidGpsFix = true;
+          localFixAcquired = true;
+          break;
+        }
+      }
+    }
+    if (localFixAcquired) break;
+    delay(1);
+  }
+
+  if (localFixAcquired) {
+    Serial.print("Hourly Global Coordinates Updated: ");
+    Serial.print(globalLat, 6);
+    Serial.print(", ");
+    Serial.println(globalLng, 6);
+  } else {
+    Serial.println("Hourly update warning: Timed out waiting for valid satellite data. Retaining last coordinates.");
+  }
+
+  // Turn OFF GPS immediately after trying to obtain an update
+  digitalWrite(MOSFET_GATE_PIN, HIGH);
+  Serial.println("GPS Powered OFF via MOSFET.\n");
+}
+
 void calibrateNoiseFloor() {
   float sum = 0;
   for (int i = 0; i < 100; i++) {
@@ -429,7 +456,7 @@ void startRecording() {
   DateTime now = rtc.now();
   char deviceName[16];
   strlcpy(deviceName, readStringFromEEPROM(eepromAddress).c_str(), sizeof(deviceName));
-  snprintf(filename, sizeof(filename), "/%s_%.6f_%.6f_%04d-%02d-%02d_%02d_%02d_%02d.wav", 
+  snprintf(filename, sizeof(filename), "/%s_%04d-%02d-%02d_%02d_%02d_%02d_%.6f_%.6f.wav", 
           deviceName, now.year(), now.month(), now.day(), 
           now.hour(), now.minute(), now.second(), globalLat, globalLng);
 
@@ -601,22 +628,4 @@ void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels,
   header[43] = (byte)((dataSize >> 24) & 0xFF); 
 
   file.write(header, WAVE_HEADER_SIZE);
-}
-
-void updateHourlyCoordinates() {
-  Serial.println("\n--- Triggering Hourly GPS Update ---");
-  
-  if (gps.location.isValid()) {
-    globalLat = gps.location.lat();
-    globalLng = gps.location.lng();
-    hasValidGpsFix = true;
-
-    Serial.print("Global Coordinates Updated: ");
-    Serial.print(globalLat, 6);
-    Serial.print(", ");
-    Serial.println(globalLng, 6);
-  } else {
-    hasValidGpsFix = false;
-    Serial.println("Hourly update failed: No valid GPS fix at this moment.");
-  }
 }
