@@ -81,6 +81,9 @@ double globalLng = DEFAULT_LNG;
 bool hasValidGpsFix = false;
 const unsigned long GPS_SETUP_TIMEOUT_MS = 1200000;   // 15 seconds max wait in setup
 const int MOSFET_GATE_PIN  = 1;
+//TIMEZONE
+RTC_DATA_ATTR int savedTimezoneOffsetHours = 0; 
+RTC_DATA_ATTR bool timezoneKnown = false;
 
 // --- LED PIN DEFINITIONS ---
 const int LED_PIN = 14; // blue led for recording or listening
@@ -110,9 +113,65 @@ const int eepromAddress = 0; // memory address
 
 // -- INSTANTIATE GLOBAL FILE NAME AND RTC --
 File file;
-char filename[90];
+char filename[92];
 RTC_DS3231 rtc;
 TinyGPSPlus gps;
+
+void setLocalTimezone(float longitude, int year, int month, int day) {
+    char tzString[32];
+    
+    if (longitude > 0) {
+        // Philippines: UTC+8. 
+        // Note: POSIX TZ format is inverted for positive offsets! UTC+8 is written as -8.
+        strcpy(tzString, "PHT-8");
+        savedTimezoneOffsetHours = 8;
+    } else {
+        // Eastern Time Zone (US). Handles EDT/EST if date logic is added.
+        // For simplicity, a basic static check or standard POSIX string can be used:
+        // "EST5EDT,M3.2.0,M11.1.0" handles EST (UTC-5) and EDT (UTC-4) automatically via standard C lib!
+        strcpy(tzString, "EST5EDT,M3.2.0,M11.1.0");
+        savedTimezoneOffsetHours = -4; // Base offset
+    }
+    
+    setenv("TZ", tzString, 1);
+    tzset();
+    timezoneKnown = true;
+    Serial.printf("Timezone configured to: %s\n", tzString);
+}
+
+void syncSystemTimeWithGPS() {
+    struct tm t;
+    t.tm_year = gps.date.year() - 1900;
+    t.tm_mon = gps.date.month() - 1;
+    t.tm_mday = gps.date.day();
+    t.tm_hour = gps.time.hour();
+    t.tm_min = gps.time.minute();
+    t.tm_sec = gps.time.second();
+    t.tm_isdst = -1; // Let the library determine DST from the TZ string
+    uint16_t year   = gps.date.year();
+    uint8_t month   = gps.date.month();
+    uint8_t day     = gps.date.day();
+    uint8_t hour    = gps.time.hour();
+    uint8_t minute  = gps.time.minute();
+    uint8_t second  = gps.time.second();
+    
+    time_t t_of_day = mktime(&t);
+    
+    // Apply UTC to system time
+    struct timeval tv = { .tv_sec = t_of_day, .tv_usec = 0 };
+    settimeofday(&tv, NULL);
+    rtc.adjust(DateTime(year, month, day, hour, minute, second));
+}
+
+void printLocalTime() {
+    struct tm timeinfo;
+    if(!getLocalTime(&timeinfo)){
+        Serial.println("Failed to obtain time");
+        return;
+    }
+    Serial.println(&timeinfo, "Local Time: %A, %B %d %Y %H:%M:%S");
+}
+
 
 void setup() {
   Serial.begin(115200);
@@ -169,7 +228,7 @@ void setup() {
 
   //one time code to enter the unit id into the EEPROM as a config
   //char charBuffer[MAX_STRING_LENGTH];
-  //String myString = "esp32_aw_01";  
+  //String myString = "aw_chipbot_01";  
   //writeStringToEEPROM(eepromAddress, myString);
   //Serial.println("String saved successfully.");
   //String retrievedString = readStringFromEEPROM(eepromAddress);
@@ -193,7 +252,23 @@ void setup() {
             Serial.print(globalLat, 6);
             Serial.print(", ");
             Serial.println(globalLng, 6);
+
+            struct tm timeinfo;
+            if (getLocalTime(&timeinfo) && timezoneKnown) {
+                Serial.println("Woke up from deep sleep. RTC time is valid.");
+                printLocalTime();
+            } else {
+                Serial.println("Cold boot or invalid time. Waiting for GPS fix...");
+                // 1. Read from your GY-NEO6MV2 module here until gps.location.isValid() and gps.time.isValid() are true
+                // 2. Once valid:
+                 float lon = gps.location.lng();
+                 setLocalTimezone(lon, gps.date.year(), gps.date.month(), gps.date.day());
+                 syncSystemTimeWithGPS();
+                 printLocalTime();
+
+            }
             break; 
+
           }
         }
       }
@@ -583,3 +658,5 @@ void writeWavHeader(File &file, int sampleRate, int bitsPerSample, int channels,
 
   file.write(header, WAVE_HEADER_SIZE);
 }
+
+
